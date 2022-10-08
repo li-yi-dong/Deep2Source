@@ -80,7 +80,7 @@ Prepare `process_group`s for collective communication
   ```
   </details>
 
-#### _EMBEDDING_GROUP
+#### _EMBEDDING_GROUP & _EMBEDDING_GLOBAL_RANKS
 * The first and last ranks in `_PIPELINE_MODEL_PARALLEL_GROUP` together with ranks in `pipeline_model_parallel_split_rank_` 
 
 #### _POSITION_EMBEDDING_GROUP
