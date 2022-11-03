@@ -1,3 +1,5 @@
+<div align='center'><font size='20'> Model </font></div>
+
 # On top of Transformer and MegatronModule
 * Architected with `language_model`(Transformer), embedding, linear, activation, layernorm and etc
 * Post processing for the last pipeline layer
@@ -97,7 +99,7 @@ class GPTModel(MegatronModule):
 ## initialize_word_embeddings
 * Parameters are shared between the word embeddings layers, and the heads at the end of the model
 * For `mpu.is_pipeline_last_stage() and not self.pre_process`
-  - `self.word_embeddings = mpu.VocabParallelEmbedding` and initialize weight to 0.0
+  - `self.word_embeddings` = [`mpu.VocabParallelEmbedding`](mpu.md#vocabparallelembedding) and initialize weight to 0.0
 * For `not mpu.is_pipeline_first_stage(ignore_virtual=True) and self.pre_process`
   - `self.language_model.embedding.zero_parameters()`
 * For [`mpu.is_rank_in_embedding_group()`](mpu.md#embeddinggroup--embeddingglobalranks)
@@ -329,3 +331,155 @@ def float16_to_fp32(val):
     return conversion_helper(val, float_conversion)
 ```
 </details>
+
+# TransformerLanguageModel
+`megatron/model/language_model.py`
+
+## initialize
+* Initialize Embedding if `self.pre_process`
+* Initialize encoder or decoder to ParallelTransformer according to `self.add_encoder` and `self.add_decoder`
+* Initialize Pooler if `self.post_process and self.add_pooler`
+  <details> 
+    <summary>Code for __init__</summary>  
+
+  ```Python
+  def __init__(self,
+               init_method,
+               output_layer_init_method,
+               encoder_attn_mask_type,
+               num_tokentypes=0,
+               add_encoder=True,
+               add_decoder=False,
+               decoder_attn_mask_type=AttnMaskType.causal,
+               add_pooler=False,
+               pre_process=True,
+               post_process=True):
+      super(TransformerLanguageModel, self).__init__()
+      args = get_args()
+
+      self.pre_process = pre_process
+      self.post_process = post_process
+      self.hidden_size = args.hidden_size
+      self.num_tokentypes = num_tokentypes
+      self.init_method = init_method
+      self.add_encoder = add_encoder
+      self.encoder_attn_mask_type = encoder_attn_mask_type
+      self.add_decoder = add_decoder
+      self.decoder_attn_mask_type = decoder_attn_mask_type
+      self.add_pooler = add_pooler
+      self.encoder_hidden_state = None
+
+      # Embeddings.
+      if self.pre_process:
+          self.embedding = Embedding(self.hidden_size,
+                                     args.padded_vocab_size,
+                                     args.max_position_embeddings,
+                                     args.hidden_dropout,
+                                     self.init_method,
+                                     self.num_tokentypes)
+          self._embedding_key = 'embedding'
+
+      # Transformer.
+      # Encoder (usually set to True, False if part of an encoder-decoder
+      # architecture and in encoder-only stage).
+      if self.add_encoder:
+          self.encoder = ParallelTransformer(
+              self.init_method,
+              output_layer_init_method,
+              self_attn_mask_type=self.encoder_attn_mask_type,
+              pre_process=self.pre_process,
+              post_process=self.post_process
+          )
+          self._encoder_key = 'encoder'
+      else:
+          self.encoder = None
+
+      # Decoder (usually set to False, True if part of an encoder-decoder
+      # architecture and in decoder-only stage).
+      if self.add_decoder:
+          self.decoder = ParallelTransformer(
+              self.init_method,
+              output_layer_init_method,
+              layer_type=LayerType.decoder,
+              self_attn_mask_type=self.decoder_attn_mask_type,
+              pre_process=self.pre_process,
+              post_process=self.post_process)
+          self._decoder_key = 'decoder'
+      else:
+          self.decoder = None
+
+      if self.post_process:
+          # Pooler.
+          if self.add_pooler:
+              self.pooler = Pooler(self.hidden_size, self.init_method)
+              self._pooler_key = 'pooler'
+  ```
+  </details>
+
+## forward
+
+  <details> 
+    <summary>Code for forward</summary>  
+
+  ```Python
+  def forward(self, enc_input_ids, enc_position_ids, enc_attn_mask,
+              dec_input_ids=None, dec_position_ids=None, dec_attn_mask=None,
+              enc_dec_attn_mask=None, tokentype_ids=None,
+              inference_params=None,
+              pooling_sequence_index=0,
+              enc_hidden_states=None, output_enc_hidden=False):
+
+      # Encoder embedding.
+      if self.pre_process:
+          encoder_input = self.embedding(enc_input_ids, enc_position_ids,
+                                         tokentype_ids=tokentype_ids)
+      else:
+          encoder_input = None
+
+      # Run encoder.
+      if enc_hidden_states is None:
+          if self.encoder is not None:
+              encoder_output = self.encoder(
+                  encoder_input,
+                  enc_attn_mask,
+                  inference_params=inference_params)
+          else:
+              encoder_output = self.encoder_hidden_state
+      else:
+          encoder_output = enc_hidden_states.to(encoder_input.dtype)
+
+      if self.post_process:
+          if self.add_pooler:
+              pooled_output = self.pooler(encoder_output,
+                                          pooling_sequence_index)
+
+      # output_enc_hidden refers to when we just need the encoder's
+      # output. For example, it is helpful to compute
+      # similarity between two sequences by average pooling
+      if not self.add_decoder or output_enc_hidden:
+          if self.add_pooler and self.post_process:
+              return encoder_output, pooled_output
+          else:
+              return encoder_output
+
+      # Decoder embedding.
+      if self.pre_process:
+          decoder_input = self.embedding(dec_input_ids,
+                                         dec_position_ids)
+      else:
+          decoder_input = None
+
+      # Run decoder.
+      decoder_output = self.decoder(
+          decoder_input,
+          dec_attn_mask,
+          encoder_output=encoder_output,
+          enc_dec_attn_mask=enc_dec_attn_mask,
+          inference_params=inference_params)
+
+      if self.add_pooler and self.post_process:
+          return decoder_output, encoder_output, pooled_output
+      else:
+          return decoder_output, encoder_output
+  ```
+  </details>

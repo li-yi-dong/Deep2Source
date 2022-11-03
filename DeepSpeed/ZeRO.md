@@ -1,39 +1,40 @@
-# Zero Redundancy Optimizer (ZeRO)
-- [Zero Redundancy Optimizer (ZeRO)](#zero-redundancy-optimizer-zero)
-  - [Official Website](#official-website)
-  - [Paper](#paper)
-  - [Overview](#overview)
-  - [Stage 1 & 2](#stage-1--2)
-    - [DeepSpeedZeroOptimizer](#deepspeedzerooptimizer)
-      - [Initialization](#initialization)
-      - [reduce_ready_partitions_and_remove_grads](#reduce_ready_partitions_and_remove_grads)
-        - [reduce_independent_p_g_buckets_and_remove_grads](#reduce_independent_p_g_buckets_and_remove_grads)
-        - [reduce_ipg_grads](#reduce_ipg_grads)
-        - [buffered_reduce_fallback](#buffered_reduce_fallback)
-        - [allreduce_no_retain](#allreduce_no_retain)
-        - [allreduce_and_copy](#allreduce_and_copy)
-        - [allreduce_bucket](#allreduce_bucket)
-      - [backward](#backward)
-      - [step](#step)
-        - [has_overflow](#has_overflow)
-        - [has_overflow_partitioned_grads_serial & has_overflow_serial](#has_overflow_partitioned_grads_serial--has_overflow_serial)
-        - [_has_inf_or_nan](#_has_inf_or_nan)
-      - [contiguous_gradients](#contiguous_gradients)
-      - [cpu_offload](#cpu_offload)
-## Official Website
+<div align='center'><font size='20'> ZeRO </font></div>
+
+- [Official Website](#official-website)
+- [Paper](#paper)
+- [Overview](#overview)
+- [Stage 1 & 2](#stage-1--2)
+  - [DeepSpeedZeroOptimizer](#deepspeedzerooptimizer)
+    - [Initialization](#initialization)
+    - [reduce_ready_partitions_and_remove_grads](#reduce_ready_partitions_and_remove_grads)
+      - [reduce_independent_p_g_buckets_and_remove_grads](#reduce_independent_p_g_buckets_and_remove_grads)
+      - [reduce_ipg_grads](#reduce_ipg_grads)
+      - [buffered_reduce_fallback](#buffered_reduce_fallback)
+      - [allreduce_no_retain](#allreduce_no_retain)
+      - [allreduce_and_copy](#allreduce_and_copy)
+      - [allreduce_bucket](#allreduce_bucket)
+    - [backward](#backward)
+    - [step](#step)
+      - [has_overflow](#has_overflow)
+      - [has_overflow_partitioned_grads_serial & has_overflow_serial](#has_overflow_partitioned_grads_serial--has_overflow_serial)
+      - [_has_inf_or_nan](#_has_inf_or_nan)
+    - [contiguous_gradients](#contiguous_gradients)
+    - [cpu_offload](#cpu_offload)
+
+# Official Website
 https://www.deepspeed.ai/tutorials/zero/
-## Paper
+# Paper
 https://arxiv.org/abs/1910.02054v3
-## Overview
+# Overview
 TODO
-## Stage 1 & 2
+# Stage 1 & 2
 * Stage 1 partitions `Optimizer`'s states across ranks
 * Stage 2 partitions `Optimizer`'s states and gradients across ranks
 * Both stage 1 & 2 introducing no communication overhead(in terms of volume). Reducing memory consumption and computation for updating parameters on a single rank.
-### DeepSpeedZeroOptimizer
+## DeepSpeedZeroOptimizer
 `deepspeed/runtime/zero/stage_1_and_2.py`
 * `DeepSpeedZeroOptimizer` is the core of ZeRO stage 1 & 2
-#### Initialization
+### Initialization
 * Initialize `round_robin_gradients` for load balancing across ranks via `_round_robin_reorder`
 * Pad (to 4 * world_size byte) and flatten parameters in `param_group` via `flatten_dense_tensors_aligned`
 * Update `bit16_groups` by `round_robin_bit16_groups` via `_update_model_bit16_weights`
@@ -469,11 +470,11 @@ def __init__(self,
 ```
 </details> 
 
-#### reduce_ready_partitions_and_remove_grads
+### reduce_ready_partitions_and_remove_grads
 * Core of `partition_gradients`(stage 2) and `overlap_comm` 
 * Be registered to each parameter's `grad_accumulator`
 * Call `reduce_independent_p_g_buckets_and_remove_grads`
-##### reduce_independent_p_g_buckets_and_remove_grads
+#### reduce_independent_p_g_buckets_and_remove_grads
 * Call [`reduce_ipg_grads`](#reduceipggrads) if accumulated `bucket size + current gradient size > reduce_bucket_size` 
 * Dealing with `contiguous_gradients`
 * Increase `elements_in_ipg_bucket` by the numel of gradient
@@ -527,7 +528,7 @@ def reduce_independent_p_g_buckets_and_remove_grads(self, param, i):
 ```
 </details> 
 
-##### reduce_ipg_grads
+#### reduce_ipg_grads
 * For `contiguous_gradients` <!--TODO: -->
 * For not `contiguous_gradients`
     - Call [`buffered_reduce_fallback`](#bufferedreducefallback)
@@ -604,7 +605,7 @@ def reduce_ipg_grads(self):
 ```
 </details>
 
-##### buffered_reduce_fallback
+#### buffered_reduce_fallback
 * Split grads in bucket according to its dtype
 * Call [`allreduce_no_retain`](#allreducenoretain) on each dtype
 <details> 
@@ -626,11 +627,11 @@ def buffered_reduce_fallback(self,
 ```
 </details>
 
-##### allreduce_no_retain
+#### allreduce_no_retain
 * Split bucket into small bucket according to `numel_per_bucket`
 * Call [`allreduce_and_copy`] on each small bucket
 
-##### allreduce_and_copy
+#### allreduce_and_copy
 * For `overlap_comm`
     - Call `torch.cuda.synchronize()`
     - Set gradients of parameters in `previous_reduced_grads` to `None` (discard gradient)
@@ -660,7 +661,7 @@ def allreduce_and_copy(self, small_bucket, rank=None, log=None):
 ```
 </details>
 
-##### allreduce_bucket
+#### allreduce_bucket
 * Flatten bucket
 * Cast tensor to be `allreduce`ed to proper dtype
 * Divide grad by `world_size`
@@ -701,12 +702,12 @@ def allreduce_bucket(self, bucket, rank=None, log=None):
 ```
 </details>
 
-#### backward
+### backward
 * Would be called by `DeepSpeedEngine.backward()`
 * Handle `contiguous_gradients`
 * Call `loss_scaler.backward()`
 
-#### step
+### step
 * Call [`has_overflow`](#hasoverflow)
 * Update scale according to `overflow`
 * If `overflow`, skipping update parameters
@@ -854,7 +855,7 @@ def step(self, closure=None):
 ```
 </details>
 
-##### has_overflow
+#### has_overflow
 * For `partition_gradients` call [`has_overflow_partitioned_grads_serial`](#hasoverflowpartitionedgradsserial--hasoverflowserial)
 * For not `partition_gradients` call [`has_overflow_serial`](#hasoverflowpartitionedgradsserial--hasoverflowserial)
 * `allreduce` result
@@ -892,10 +893,10 @@ def has_overflow(self, partition_gradients=True):
 ```
 </details>
 
-##### has_overflow_partitioned_grads_serial & has_overflow_serial
+#### has_overflow_partitioned_grads_serial & has_overflow_serial
 * Call [`_has_inf_or_nan`](#hasinfornan)
 
-##### _has_inf_or_nan
+#### _has_inf_or_nan
 * Sum
 ```Python
 a = torch.Tensor([1, float('nan'), 1]) 
@@ -939,6 +940,6 @@ def _has_inf_or_nan(x, j=None):
 ```
 </details>
 
-#### contiguous_gradients <!--TODO: -->
+### contiguous_gradients <!--TODO: -->
 
-#### cpu_offload <!--TODO: -->
+### cpu_offload <!--TODO: -->

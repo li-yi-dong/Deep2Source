@@ -1,3 +1,5 @@
+<div align='center'><font size='20'> MPU </font></div>
+
 # mpu (model parallel utility)
 * Utility for managing world info and Tensor/Pipeline parallel
 
@@ -243,7 +245,8 @@ def initialize_model_parallel(tensor_model_parallel_size_=1,
 ```
 </details>
 
-# get_num_layers
+## get_num_layers
+`megatron/mpu/initialize.py`
 Compute the number of transformer layers resident on the current rank.
 * For not using pipeline
   - Number of layers equals to `args.num_layers`
@@ -258,7 +261,7 @@ Compute the number of transformer layers resident on the current rank.
     - Compute `num_layers` according to whether current should have encoder or decoder
 
 <details> 
-    <summary>Code for initialize _MODEL_PARALLEL_GROUP</summary>  
+    <summary>Code for get_num_layers</summary>  
 
 ```Python
 def get_num_layers(args, is_encoder_and_decoder_model):
@@ -307,5 +310,86 @@ if get_pipeline_model_parallel_world_size() > 1:
 else:
     num_layers = args.num_layers
 return num_layers
+```
+</details>
+
+## VocabParallelEmbedding
+`megatron/mpu/layers.py`
+
+<details> 
+    <summary>Code for VocabParallelEmbedding</summary>  
+
+```Python
+class VocabParallelEmbedding(torch.nn.Module):
+    """Embedding parallelized in the vocabulary dimension.
+
+    This is mainly adapted from torch.nn.Embedding and all the default
+    values are kept.
+    Arguments:
+        num_embeddings: vocabulary size.
+        embedding_dim: size of hidden state.
+        init_method: method to initialize weights.
+    """
+
+    def __init__(self, num_embeddings, embedding_dim,
+                 init_method=init.xavier_normal_):
+        super(VocabParallelEmbedding, self).__init__()
+        # Keep the input dimensions.
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
+        # Set the detauls for compatibility.
+        self.padding_idx = None
+        self.max_norm = None
+        self.norm_type = 2.
+        self.scale_grad_by_freq = False
+        self.sparse = False
+        self._weight = None
+        self.tensor_model_parallel_size = get_tensor_model_parallel_world_size()
+        # Divide the weight matrix along the vocaburaly dimension.
+        self.vocab_start_index, self.vocab_end_index = \
+            VocabUtility.vocab_range_from_global_vocab_size(
+                self.num_embeddings, get_tensor_model_parallel_rank(),
+                self.tensor_model_parallel_size)
+        self.num_embeddings_per_partition = self.vocab_end_index - \
+            self.vocab_start_index
+
+        # Allocate weights and initialize.
+        args = get_args()
+        if args.use_cpu_initialization:
+            self.weight = Parameter(torch.empty(
+                self.num_embeddings_per_partition, self.embedding_dim,
+                dtype=args.params_dtype))
+            _initialize_affine_weight_cpu(
+                self.weight, self.num_embeddings, self.embedding_dim,
+                self.num_embeddings_per_partition, 0, init_method)
+        else:
+            self.weight = Parameter(torch.empty(
+                self.num_embeddings_per_partition, self.embedding_dim,
+                device=torch.cuda.current_device(), dtype=args.params_dtype))
+            _initialize_affine_weight_gpu(self.weight, init_method,
+                                          partition_dim=0, stride=1)
+
+    def forward(self, input_):
+        if self.tensor_model_parallel_size > 1:
+            # Build the mask.
+            input_mask = (input_ < self.vocab_start_index) | \
+                         (input_ >= self.vocab_end_index)
+            # Mask the input.
+            masked_input = input_.clone() - self.vocab_start_index
+            masked_input[input_mask] = 0
+        else:
+            masked_input = input_
+            # Get the embeddings.
+        output_parallel = F.embedding(masked_input, self.weight,
+                                      self.padding_idx, self.max_norm,
+                                      self.norm_type, self.scale_grad_by_freq,
+                                      self.sparse)
+        # Mask the output embedding.
+        if self.tensor_model_parallel_size > 1:
+            output_parallel[input_mask, :] = 0.0
+        # Reduce across all the model parallel GPUs.
+        output = reduce_from_tensor_model_parallel_region(output_parallel)
+        return output
+
 ```
 </details>
