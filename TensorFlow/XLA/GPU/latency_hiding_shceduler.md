@@ -1,5 +1,10 @@
+<div align='center'><font size='20'> Latency Hiding Scheduler </font></div>
+
+- Reorder instructions so that communications can be overlapped with computations
+- Under memory limit
+
 # Cost
-2 kinds: inter-nodes and intra-nodes
+- 2 kinds: inter-nodes and intra-nodes
 ## Latency
 - inter-nodes
 - Only the start and end OP for the same collective has KHighLatency of 5000
@@ -16,7 +21,7 @@
   <details> 
       <summary>Resource definition</summary>  
 
-  ```C++
+    ```C++
     enum class ResourceType {
     kNoResource = 0,
     kAllToAll = 1,
@@ -28,7 +33,7 @@
     kRecvHost = 7,
     kNumResources = 8,
     };
-  ```
+    ```
   </details>
 
 # Policy (ReadySetLT)
@@ -52,13 +57,13 @@ Priority from top to bottom
     <summary>Estimation for ready or not</summary>  
 
     ```C++
-      const HloGraphNode& start =
-          sched_state_.sched_graph.GetNode(gn.GetInstr().operand(0));
-      const LatencyEstimator::TimeCost latency =
-          sched_state_.latency_estimator->GetLatencyBetween(start, gn);
-      if (start.GetReadyTime() - sched_state_.current_time <= latency) {
-        return false;
-      }
+    const HloGraphNode& start =
+        sched_state_.sched_graph.GetNode(gn.GetInstr().operand(0));
+    const LatencyEstimator::TimeCost latency =
+        sched_state_.latency_estimator->GetLatencyBetween(start, gn);
+    if (start.GetReadyTime() - sched_state_.current_time <= latency) {
+      return false;
+    }
     ```
   </details>
 ## Schedule node with less ready interval (ReadyTime - CurrentTime)
@@ -100,19 +105,19 @@ Priority from top to bottom
     <summary>Closest to estimated latency</summary>  
 
     ```C++
-      if (!sched_state_.next_ready_stack.empty()) {
-        HloGraphNode::TimeCost latest_ready =
-            sched_state_.next_ready_stack.front()->GetReadyTime();
-        HloGraphNode::TimeCost a_cost_diff = std::abs(
-            latest_ready - sched_state_.current_time - a.node->GetCost());
-        HloGraphNode::TimeCost b_cost_diff = std::abs(
-            latest_ready - sched_state_.current_time - b.node->GetCost());
-        if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
-                a_cost_diff < b_cost_diff, a, b_cost_diff < a_cost_diff, b,
-                "kAvoidWaste")) {
-          return *value;
-        }
+    if (!sched_state_.next_ready_stack.empty()) {
+      HloGraphNode::TimeCost latest_ready =
+          sched_state_.next_ready_stack.front()->GetReadyTime();
+      HloGraphNode::TimeCost a_cost_diff = std::abs(
+          latest_ready - sched_state_.current_time - a.node->GetCost());
+      HloGraphNode::TimeCost b_cost_diff = std::abs(
+          latest_ready - sched_state_.current_time - b.node->GetCost());
+      if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
+              a_cost_diff < b_cost_diff, a, b_cost_diff < a_cost_diff, b,
+              "kAvoidWaste")) {
+        return *value;
       }
+    }
     ```
   </details>
 ## Prioritize the node with `AsyncDone` in its operands
