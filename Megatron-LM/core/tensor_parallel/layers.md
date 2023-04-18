@@ -197,3 +197,47 @@
 - Calculate partial output by [LinearWithGradAccumulationAndAsyncCommunication](#linearwithgradaccumulationandasynccommunication)
 - all_reduce partial output
 - Add bias
+    <details> 
+        <summary>Code for RowParallelLinear.forward</summary>  
+
+    ```Python 
+    def forward(self, input_):
+        """Forward of RowParallelLinear
+
+        Args:
+            input_: 3D tensor whose order of dimension is [sequence, batch, hidden]
+
+        Returns:
+            - output
+            - bias
+        """
+        # Set up backprop all-reduce.
+        if self.input_is_parallel:
+            input_parallel = input_
+        else:
+            assert not self.sequence_parallel_enabled
+            input_parallel = scatter_to_tensor_model_parallel_region(input_)
+        # Matrix multiply.
+        output_parallel = linear_with_grad_accumulation_and_async_allreduce(
+            input=input_parallel,
+            weight=self.weight,
+            bias=None,
+            gradient_accumulation_fusion=self.gradient_accumulation_fusion,
+            async_grad_allreduce=False,
+            sequence_parallel_enabled=False,
+        )
+
+        # All-reduce across all the partitions.
+        if self.sequence_parallel_enabled:
+            output_ = reduce_scatter_to_sequence_parallel_region(output_parallel)
+        else:
+            output_ = reduce_from_tensor_model_parallel_region(output_parallel)
+        if not self.skip_bias_add:
+            output = output_ + self.bias if self.bias is not None else output_
+            output_bias = None
+        else:
+            output = output_
+            output_bias = self.bias
+        return output, output_bias
+    ```
+    </details>
