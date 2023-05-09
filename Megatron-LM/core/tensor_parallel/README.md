@@ -5,3 +5,6 @@
 
 # [mappings.md](mappings.md)
 - Implementations collective utils for tensor parallel
+
+# [random.md](random.md)
+- CudaRNGStatesTracker and CheckpointFunction
