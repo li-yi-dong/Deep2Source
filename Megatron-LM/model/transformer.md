@@ -29,6 +29,37 @@
 # ParallelAttention
 ![ParallelSelfAttention](../images/ParallelSelfAttention.png)
 ## _checkpointed_attention_forward
+- Only for [`CoreAttention`](#coreattention) no [`FlashSelfAttention`](#flashselfattention)
+- Save all the input of core attention for backward
+- Run the [`CoreAttention`](#coreattention) forward with [`CheckpointFunction`](../core/tensor_parallel/random.md#checkpointfunction)
+    <details> 
+        <summary>Code for _checkpointed_attention_forward</summary>  
+
+    ```Python
+    def _checkpointed_attention_forward(self, query_layer, key_layer,
+                                        value_layer, attention_mask,
+                                        rotary_pos_emb=None):
+        """Forward method with activation checkpointing."""
+        def custom_forward(*inputs):
+            query_layer = inputs[0]
+            key_layer = inputs[1]
+            value_layer = inputs[2]
+            attention_mask = inputs[3]
+            output_ = self.core_attention(query_layer, key_layer,
+                                          value_layer, attention_mask)
+            return output_
+
+        q_pos_emb, k_pos_emb = (None, None) if rotary_pos_emb is None \
+            else rotary_pos_emb
+
+        hidden_states = tensor_parallel.checkpoint(
+            custom_forward,
+            False, query_layer, key_layer, value_layer, attention_mask,
+            q_pos_emb, k_pos_emb)
+
+        return hidden_states
+    ```
+    </details>
 
 ## initialization
 - [`ColumnParallelLinear`](../core/tensor_parallel/layers.md#columnparallellinear)
